@@ -1,0 +1,32 @@
+[package]
+name = "mkfs-gemdos"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "WTFPL"
+authors = ["Gareth Davidson <gaz@bitplane.net>"]
+repository = "https://github.com/bitplane/mkfs-gemdos"
+homepage = "https://bitplane.net/dev/rust/mkfs-gemdos"
+description = "Create GEMDOS (Atari TOS) filesystem disk images"
+readme = "README.md"
+keywords = ["gemdos", "atari", "fat12", "filesystem", "mkfs"]
+categories = ["command-line-utilities", "filesystem"]
+
+[[bin]]
+name = "mkfs-gemdos"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
