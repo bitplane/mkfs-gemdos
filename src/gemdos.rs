@@ -13,8 +13,7 @@
 //! ```
 //!
 //! Atari quirks vs. PC FAT12:
-//! - Bytes-per-sector at offset 0x0B is **big-endian** (the rest of the
-//!   BPB is little-endian as on PC).
+//! - BPB fields, including bytes-per-sector, are little-endian as on PC.
 //! - Boot sector ends with a BE16 word-sum checksum: the sum of all 256
 //!   big-endian 16-bit words at offsets 0..511 must equal `0x1234`.
 //! - 24-bit serial number at offsets 0x08..0x0A.
@@ -139,8 +138,8 @@ impl Gemdos {
         self.image[0x09] = ((serial >> 8) & 0xFF) as u8;
         self.image[0x0A] = (serial & 0xFF) as u8;
 
-        // BPB: bytes-per-sector at 0x0B is BIG-endian (Atari quirk).
-        put_be16(&mut self.image, 0x0B, SECTOR_SIZE as u16);
+        // BPB fields use little-endian byte order.
+        put_le16(&mut self.image, 0x0B, SECTOR_SIZE as u16);
         self.image[0x0D] = SECTORS_PER_CLUSTER as u8; // SPC
         put_le16(&mut self.image, 0x0E, 1); // reserved sectors
         self.image[0x10] = NUM_FATS as u8;
@@ -586,8 +585,8 @@ mod tests {
         assert_eq!(bytes[0], 0x60);
         assert_eq!(bytes[1], 0x38);
         assert_eq!(&bytes[2..8], b"GEMDOS");
-        // Bytes-per-sector at 0x0B is BIG-endian
-        assert_eq!(read_be16(&bytes, 0x0B), 512);
+        // Readers interpret the BPB in little-endian byte order.
+        assert_eq!(&bytes[0x0B..0x0D], &[0x00, 0x02]);
 
         // Boot checksum: sum of 256 BE16 words must equal 0x1234.
         let mut sum = 0u16;
