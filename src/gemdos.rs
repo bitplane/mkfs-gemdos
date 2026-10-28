@@ -85,6 +85,9 @@ impl Gemdos {
         if total_sectors <= reserved_sectors + root_dir_sectors + NUM_FATS + 2 {
             anyhow::bail!("filesystem too small");
         }
+        if total_sectors > u16::MAX as u32 {
+            anyhow::bail!("sector count exceeds the 16-bit GEMDOS BPB limit");
+        }
         let data_sectors = total_sectors - reserved_sectors - root_dir_sectors;
 
         // Iteratively size the FAT: more clusters → bigger FAT → fewer
@@ -97,10 +100,13 @@ impl Gemdos {
             let fat_bytes = (fat_entries_needed * 3).div_ceil(2);
             let spf_needed = fat_bytes.div_ceil(SECTOR_SIZE as u32);
             if spf_needed <= sectors_per_fat {
-                break clusters.min(FAT12_MAX_CLUSTERS);
+                break clusters;
             }
             sectors_per_fat = spf_needed;
         };
+        if total_clusters > FAT12_MAX_CLUSTERS {
+            anyhow::bail!("image requires more than {FAT12_MAX_CLUSTERS} FAT12 clusters");
+        }
         let data_start = reserved_sectors + NUM_FATS * sectors_per_fat + root_dir_sectors;
 
         let mut fat = vec![0u16; (total_clusters + 2) as usize];
@@ -599,6 +605,19 @@ mod tests {
             i += 2;
         }
         assert_eq!(sum, 0x1235);
+    }
+
+    #[test]
+    fn layout_limits_are_checked_before_allocation() {
+        for size in [0, 1, 6, 4102, 8192, 32768, u32::MAX] {
+            assert!(Gemdos::new(size).is_err(), "accepted {size} KB");
+        }
+        for size in [7, 720, 1440, 4101] {
+            let g = Gemdos::new(size).unwrap();
+            assert_eq!(g.total_clusters, (g.total_sectors - g.data_start) / 2);
+            assert!(g.total_clusters <= 4084);
+            assert!(g.total_sectors <= 65535);
+        }
     }
 
     #[test]
