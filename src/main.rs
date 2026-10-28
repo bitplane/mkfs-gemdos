@@ -35,7 +35,7 @@ fn run() -> anyhow::Result<()> {
     let stats = g.write_to(&cli.filename)?;
 
     println!(
-        "Created GEMDOS image: {} ({}KB, {} clusters, FAT12, checksum=0x1234)",
+        "Created GEMDOS image: {} ({}KB, {} clusters, FAT12, non-bootable)",
         cli.filename.display(),
         cli.size_kb,
         stats.total_clusters,

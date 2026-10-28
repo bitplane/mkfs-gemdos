@@ -4,10 +4,11 @@ Create GEMDOS (Atari TOS) FAT12 disk images in Rust.
 
 GEMDOS is FAT12 with Atari-specific quirks:
 
-- 68000 `BRA.S` boot opcode at offset 0
+- Non-executable boot sector (no boot program)
 - BPB fields, including bytes-per-sector, are **little-endian**, as on PC
 - Boot sector ends with a **BE16 word-sum checksum** (sum of the 256
-  big-endian 16-bit words at offsets 0..511 must equal `0x1234`)
+  big-endian 16-bit words at offsets 0..511 is `0x1235`; `0x1234` would
+  mark the disk executable)
 - 24-bit serial number at offsets 0x08–0x0A
 - Otherwise the layout matches MS-DOS FAT12
 

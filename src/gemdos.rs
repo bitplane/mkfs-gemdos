@@ -15,7 +15,8 @@
 //! Atari quirks vs. PC FAT12:
 //! - BPB fields, including bytes-per-sector, are little-endian as on PC.
 //! - Boot sector ends with a BE16 word-sum checksum: the sum of all 256
-//!   big-endian 16-bit words at offsets 0..511 must equal `0x1234`.
+//!   big-endian words equals `0x1234` only for executable disks.
+//!   These data disks use `0x1235` to prevent execution.
 //! - 24-bit serial number at offsets 0x08..0x0A.
 //!
 //! `dos_time`/`dos_date` use **local** time, matching DOS convention.
@@ -123,9 +124,7 @@ impl Gemdos {
     }
 
     fn write_boot_sector(&mut self) {
-        // 68000 BRA.S to skip the BPB (offset +0x38 from the byte after the opcode).
-        self.image[0x00] = 0x60;
-        self.image[0x01] = 0x38;
+        // No boot program: leave the unused branch word zero.
         self.image[0x02..0x08].copy_from_slice(b"GEMDOS");
 
         // 24-bit serial at 0x08..0x0A (big-endian Atari convention).
@@ -422,9 +421,8 @@ impl Gemdos {
         }
     }
 
-    /// Sum of all 256 BE16 words in the boot sector must equal `0x1234`.
-    /// Set the checksum word at offset `0x1FE` to whatever makes the total
-    /// come out right.
+    /// Mark this data disk non-executable, including when the unpatched
+    /// sector happens to sum to the executable signature 0x1234.
     fn fix_checksum(&mut self) {
         let mut sum: u16 = 0;
         let mut i = 0usize;
@@ -432,7 +430,7 @@ impl Gemdos {
             sum = sum.wrapping_add(((self.image[i] as u16) << 8) | (self.image[i + 1] as u16));
             i += 2;
         }
-        let needed = 0x1234u16.wrapping_sub(sum);
+        let needed = 0x1235u16.wrapping_sub(sum);
         put_be16(&mut self.image, 0x1FE, needed);
     }
 }
@@ -581,21 +579,19 @@ mod tests {
 
         let bytes = fs::read(&img).unwrap();
         assert_eq!(bytes.len(), 720 * 1024);
-        // BRA.S 0x60 0x38
-        assert_eq!(bytes[0], 0x60);
-        assert_eq!(bytes[1], 0x38);
+        assert_eq!(&bytes[..2], &[0, 0]);
         assert_eq!(&bytes[2..8], b"GEMDOS");
         // Readers interpret the BPB in little-endian byte order.
         assert_eq!(&bytes[0x0B..0x0D], &[0x00, 0x02]);
 
-        // Boot checksum: sum of 256 BE16 words must equal 0x1234.
+        // A data disk must never have the executable checksum.
         let mut sum = 0u16;
         let mut i = 0;
         while i < 512 {
             sum = sum.wrapping_add(read_be16(&bytes, i));
             i += 2;
         }
-        assert_eq!(sum, 0x1234);
+        assert_eq!(sum, 0x1235);
     }
 
     #[test]
