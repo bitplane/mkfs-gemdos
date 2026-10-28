@@ -568,25 +568,55 @@ fn meta_mtime(meta: &fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
-#[cfg(unix)]
+// FAT's latest representable local timestamp: 2107-12-31 23:59:58.
+#[cfg(any(unix, windows))]
+const DOS_MAX: (u16, u16) = ((23 << 11) | (59 << 5) | 29, (127 << 9) | (12 << 5) | 31);
+
+#[cfg(any(unix, windows))]
 fn dos_time_date(epoch: i64) -> (u16, u16) {
     use std::mem::MaybeUninit;
-    let t = epoch as libc::time_t;
-    let mut tm = MaybeUninit::<libc::tm>::uninit();
-    let r = unsafe { libc::localtime_r(&t, tm.as_mut_ptr()) };
-    if r.is_null() {
+    // Avoid native API range errors for dates far outside FAT's range.
+    // These bounds leave ample room for local time-zone offsets.
+    if epoch < 315_360_000 {
+        // 1979-12-30 UTC
         return dos_fallback();
     }
-    let tm = unsafe { tm.assume_init() };
-    let dt = ((tm.tm_hour as u16) << 11) | ((tm.tm_min as u16) << 5) | ((tm.tm_sec as u16) / 2);
-    let year = (tm.tm_year - 80).max(0) as u16;
-    let dd = (year << 9) | (((tm.tm_mon + 1) as u16) << 5) | (tm.tm_mday as u16);
+    if epoch > 4_355_164_800 {
+        // 2108-01-05 UTC
+        return DOS_MAX;
+    }
+    let t = epoch as libc::time_t;
+    let mut tm = MaybeUninit::<libc::tm>::uninit();
+    // SAFETY: t is initialized and tm points to writable, correctly sized storage.
+    #[cfg(unix)]
+    let success = !unsafe { libc::localtime_r(&t, tm.as_mut_ptr()) }.is_null();
+    #[cfg(windows)]
+    let success = unsafe { libc::localtime_s(tm.as_mut_ptr(), &t) } == 0;
+    if !success {
+        return dos_fallback();
+    }
+    // SAFETY: the native conversion succeeded and initialized tm.
+    encode_dos_time(unsafe { &tm.assume_init() })
+}
+
+#[cfg(any(unix, windows))]
+fn encode_dos_time(tm: &libc::tm) -> (u16, u16) {
+    if tm.tm_year < 80 {
+        return dos_fallback();
+    }
+    if tm.tm_year > 207 {
+        return DOS_MAX;
+    }
+    // A leap second must not produce an invalid DOS seconds field.
+    let dt =
+        ((tm.tm_hour as u16) << 11) | ((tm.tm_min as u16) << 5) | (tm.tm_sec.min(59) as u16 / 2);
+    let dd =
+        (((tm.tm_year - 80) as u16) << 9) | (((tm.tm_mon + 1) as u16) << 5) | tm.tm_mday as u16;
     (dt, dd)
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn dos_time_date(_epoch: i64) -> (u16, u16) {
-    // Without local time available, fall back to a fixed value (1980-01-01 00:00).
     dos_fallback()
 }
 
@@ -602,6 +632,42 @@ mod tests {
 
     fn read_be16(buf: &[u8], off: usize) -> u16 {
         u16::from_be_bytes(buf[off..off + 2].try_into().unwrap())
+    }
+
+    #[test]
+    #[cfg(any(unix, windows))]
+    fn timestamps_preserve_local_time_and_clamp_dates() {
+        // SAFETY: zero is valid for every field of libc::tm.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        tm.tm_year = 124;
+        tm.tm_mon = 6;
+        tm.tm_mday = 12;
+        tm.tm_hour = 13;
+        tm.tm_min = 14;
+        tm.tm_sec = 15;
+        tm.tm_isdst = -1;
+        let expected = ((13 << 11) | (14 << 5) | 7, (44 << 9) | (7 << 5) | 12);
+        assert_eq!(encode_dos_time(&tm), expected);
+        // A July 2024 instant remains in July 2024 in any local time zone.
+        // This exercises the native conversion on Windows as well as Unix.
+        let (_, date) = dos_time_date(1_720_785_600);
+        assert_eq!(date >> 9, 44);
+        assert_eq!((date >> 5) & 15, 7);
+        #[cfg(unix)]
+        {
+            // SAFETY: mktime receives a valid, writable tm.
+            let epoch = unsafe { libc::mktime(&mut tm) };
+            assert_ne!(epoch, -1);
+            assert_eq!(dos_time_date(epoch as i64), expected);
+        }
+        tm.tm_year = 79;
+        assert_eq!(encode_dos_time(&tm), (0, 33));
+        tm.tm_year = 208;
+        assert_eq!(encode_dos_time(&tm), DOS_MAX);
+        assert_eq!(dos_time_date(i64::MIN), (0, 33));
+        assert_eq!(dos_time_date(i64::MAX), DOS_MAX);
+        // Mid-2108 must clamp even when native time conversion succeeds.
+        assert_eq!(dos_time_date(4_370_000_000), DOS_MAX);
     }
 
     #[test]
@@ -737,11 +803,8 @@ mod tests {
 
     #[test]
     fn illegal_char_is_rejected() {
-        let src = TempDir::new().unwrap();
-        // ':' is illegal in 8.3
-        File::create(src.path().join("a:b.txt")).unwrap();
-        let mut g = Gemdos::new(720).unwrap();
-        let err = g.populate_root(src.path()).unwrap_err();
+        // Validate directly: Windows cannot create a filename containing a colon.
+        let err = validate_user_name("a:b.txt").unwrap_err();
         assert!(err.to_string().contains("illegal character"));
     }
 

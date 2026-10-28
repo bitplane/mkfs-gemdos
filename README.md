@@ -59,6 +59,9 @@ Source filenames must conform to FAT 8.3:
 
 Duplicate 8.3 names within a directory are rejected.
 
+File modification times use local time on Unix and Windows, with two-second
+FAT precision. Dates outside 1980–2107 are clamped to the nearest endpoint.
+
 ## License
 
 WTFPL with one extra clause: don't blame me. See [LICENSE](LICENSE).
