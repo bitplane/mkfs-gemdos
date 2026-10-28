@@ -35,7 +35,7 @@ each [GitHub release][releases].
 # Default: 720 KB DSDD floppy.
 mkfs-gemdos out.st
 
-# Custom size.
+# 1.44 MB high-density floppy.
 mkfs-gemdos -s 1440 out.st
 
 # Populate from a directory tree (recursive — subdirectories are preserved).
@@ -44,6 +44,9 @@ mkfs-gemdos -d ./payload out.st
 # Mount on Linux.
 sudo mount -o loop,ro -t vfat out.st /mnt
 ```
+
+Supported capacities are 360, 720, 1200, 1440, and 2880 KB. Other sizes are
+rejected because they do not have a supported physical floppy geometry.
 
 ## Filename rules
 

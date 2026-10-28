@@ -18,7 +18,7 @@ struct Cli {
     #[arg(short = 'd', long)]
     directory: Option<PathBuf>,
 
-    /// Image size in kilobytes (default: 720, a DSDD 3.5" floppy)
+    /// Floppy size in KB: 360, 720, 1200, 1440, or 2880 (default: 720)
     #[arg(short = 's', long, default_value_t = 720)]
     size_kb: u32,
 

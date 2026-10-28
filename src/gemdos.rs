@@ -70,6 +70,26 @@ fn put_le32(buf: &mut [u8], off: usize, v: u32) {
 
 impl Gemdos {
     pub fn new(size_kb: u32) -> anyhow::Result<Self> {
+        // Standard double-sided floppy formats: capacity, sectors/track, media.
+        let (sectors_per_track, media) = match size_kb {
+            360 => (9, 0xFD), // 40 tracks
+            720 => (9, 0xF9), // 80 tracks
+            1200 => (15, 0xF9),
+            1440 => (18, 0xF0),
+            2880 => (36, 0xF0),
+            _ => anyhow::bail!(
+                "unsupported floppy size: {size_kb} KB (use 360, 720, 1200, 1440, or 2880)"
+            ),
+        };
+        let mut g = Self::new_layout(size_kb)?;
+        put_le16(&mut g.image, 0x18, sectors_per_track);
+        g.image[0x15] = media;
+        g.fat[0] = 0xF00 | u16::from(media);
+        Ok(g)
+    }
+
+    // Separate layout arithmetic from the supported physical floppy formats.
+    fn new_layout(size_kb: u32) -> anyhow::Result<Self> {
         if size_kb == 0 {
             anyhow::bail!("size must be positive");
         }
@@ -608,12 +628,36 @@ mod tests {
     }
 
     #[test]
+    fn standard_floppy_geometry_matches_capacity() {
+        for (size, tracks, sectors, media) in [
+            (360, 40, 9, 0xFD),
+            (720, 80, 9, 0xF9),
+            (1200, 80, 15, 0xF9),
+            (1440, 80, 18, 0xF0),
+            (2880, 80, 36, 0xF0),
+        ] {
+            let mut g = Gemdos::new(size).unwrap();
+            assert_eq!(g.total_sectors, tracks * 2 * sectors);
+            assert_eq!(
+                u16::from_le_bytes(g.image[24..26].try_into().unwrap()) as u32,
+                sectors
+            );
+            assert_eq!(u16::from_le_bytes(g.image[26..28].try_into().unwrap()), 2);
+            assert_eq!(g.image[21], media);
+            g.write_fat(1);
+            assert_eq!(g.image[512], media);
+        }
+        assert!(Gemdos::new(344).is_err());
+        assert!(Gemdos::new(8192).is_err());
+    }
+
+    #[test]
     fn layout_limits_are_checked_before_allocation() {
         for size in [0, 1, 6, 4102, 8192, 32768, u32::MAX] {
-            assert!(Gemdos::new(size).is_err(), "accepted {size} KB");
+            assert!(Gemdos::new_layout(size).is_err(), "accepted {size} KB");
         }
         for size in [7, 720, 1440, 4101] {
-            let g = Gemdos::new(size).unwrap();
+            let g = Gemdos::new_layout(size).unwrap();
             assert_eq!(g.total_clusters, (g.total_sectors - g.data_start) / 2);
             assert!(g.total_clusters <= 4084);
             assert!(g.total_sectors <= 65535);
@@ -626,7 +670,7 @@ mod tests {
         fs::write(src.path().join("HELLO.TXT"), b"hello").unwrap();
         let dst = TempDir::new().unwrap();
         for size in [343, 344, 345] {
-            let mut g = Gemdos::new(size).unwrap();
+            let mut g = Gemdos::new_layout(size).unwrap();
             g.populate_root(src.path()).unwrap();
             let root = g.root_dir_offset();
             let spf = g.sectors_per_fat as usize * SECTOR_SIZE;
