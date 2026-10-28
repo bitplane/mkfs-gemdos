@@ -467,6 +467,9 @@ fn illegal_83_char(c: u8) -> bool {
 }
 
 fn validate_user_name(name: &str) -> anyhow::Result<()> {
+    if !name.is_ascii() {
+        anyhow::bail!("non-ASCII filename: {name}");
+    }
     if name.starts_with('.') {
         anyhow::bail!("name starts with dot (no basename): {name}");
     }
@@ -644,6 +647,29 @@ mod tests {
         let mut g = Gemdos::new(720).unwrap();
         let err = g.populate_root(src.path()).unwrap_err();
         assert!(err.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn unicode_names_are_rejected_in_root_and_subdirectories() {
+        for name in ["存.txt", "café.txt", "file.é"] {
+            for nested in [false, true] {
+                let src = TempDir::new().unwrap();
+                let parent = if nested {
+                    let sub = src.path().join("SUB");
+                    fs::create_dir(&sub).unwrap();
+                    sub
+                } else {
+                    src.path().to_path_buf()
+                };
+                fs::write(parent.join(name), b"payload").unwrap();
+                let mut g = Gemdos::new(720).unwrap();
+                assert!(g
+                    .populate_root(src.path())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("non-ASCII"));
+            }
+        }
     }
 
     #[test]
