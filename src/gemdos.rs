@@ -404,6 +404,8 @@ impl Gemdos {
 
     fn write_fat(&mut self, fat_start_sector: u32) {
         let base = (fat_start_sector as usize) * SECTOR_SIZE;
+        let end = base + self.sectors_per_fat as usize * SECTOR_SIZE;
+        let output = &mut self.image[base..end];
         let entries = self.total_clusters + 2;
         let mut i = 0u32;
         while i < entries {
@@ -413,10 +415,12 @@ impl Gemdos {
             } else {
                 0
             };
-            let byte_off = base + (i as usize / 2) * 3;
-            self.image[byte_off] = (a & 0xFF) as u8;
-            self.image[byte_off + 1] = (((a >> 8) & 0x0F) | ((b & 0x0F) << 4)) as u8;
-            self.image[byte_off + 2] = ((b >> 4) & 0xFF) as u8;
+            let byte_off = (i as usize / 2) * 3;
+            output[byte_off] = (a & 0xFF) as u8;
+            output[byte_off + 1] = (((a >> 8) & 0x0F) | ((b & 0x0F) << 4)) as u8;
+            if i + 1 < entries {
+                output[byte_off + 2] = ((b >> 4) & 0xFF) as u8;
+            }
             i += 2;
         }
     }
@@ -592,6 +596,27 @@ mod tests {
             i += 2;
         }
         assert_eq!(sum, 0x1235);
+    }
+
+    #[test]
+    fn odd_fat_entry_at_sector_boundary_preserves_root() {
+        let src = TempDir::new().unwrap();
+        fs::write(src.path().join("HELLO.TXT"), b"hello").unwrap();
+        let dst = TempDir::new().unwrap();
+        for size in [343, 344, 345] {
+            let mut g = Gemdos::new(size).unwrap();
+            g.populate_root(src.path()).unwrap();
+            let root = g.root_dir_offset();
+            let spf = g.sectors_per_fat as usize * SECTOR_SIZE;
+            let img = dst.path().join("test.st");
+            g.write_to(&img).unwrap();
+            let bytes = fs::read(img).unwrap();
+            assert_eq!(&bytes[root..root + 11], b"HELLO   TXT");
+            assert_eq!(&bytes[512..512 + spf], &bytes[512 + spf..512 + 2 * spf]);
+            let cluster = u16::from_le_bytes(bytes[root + 26..root + 28].try_into().unwrap());
+            let data = root + 112 * 32 + (cluster as usize - 2) * 1024;
+            assert_eq!(&bytes[data..data + 5], b"hello");
+        }
     }
 
     #[test]
